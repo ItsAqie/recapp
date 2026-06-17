@@ -81,9 +81,6 @@ for folder_id in reversed(list(st.session_state.history_db.keys())):
 # AREA KERJA UTAMA
 # =========================================================================
 if st.session_state.current_folder == "Buat Folder Baru ➕":
-    # ---------------------------------------------------------
-    # HALAMAN 1: PEMBUATAN FOLDER KOSONG
-    # ---------------------------------------------------------
     st.header("➕ Buat Folder Rekap Baru")
     st.write("Buat wadah foldernya terlebih dahulu. Anda bisa mengisi screenshot dan merekap datanya nanti.")
     
@@ -97,29 +94,23 @@ if st.session_state.current_folder == "Buat Folder Baru ➕":
         if st.button("📁 Buat Folder Sekarang", type="primary"):
             folder_id = datetime.now().strftime('%Y%m%d_%H%M%S')
             
-            # Buat struktur folder kosong (data masih array kosong)
             st.session_state.history_db[folder_id] = {
                 "label": f"{nama_sesi} ({tipe_poin})",
                 "tipe": tipe_poin,
-                "data": [] # Belum ada data
+                "data": [] 
             }
             save_history(st.session_state.history_db)
             
-            # Langsung arahkan (buka) folder yang baru dibuat
             st.session_state.current_folder = folder_id
             st.rerun()
 
 else:
-    # ---------------------------------------------------------
-    # HALAMAN 2: DI DALAM FOLDER
-    # ---------------------------------------------------------
     folder_id = st.session_state.current_folder
     folder_data = st.session_state.history_db[folder_id]
     
     st.header(f"📂 {folder_data['label']}")
     st.markdown("---")
     
-    # KONDISI A: FOLDER MASIH KOSONG (Waktunya Upload & Ekstrak)
     if not folder_data.get('data'):
         with st.chat_message("ai"):
             st.write("Folder ini masih kosong. Silakan unggah *screenshot* poin untuk mulai direkap oleh sistem AI.")
@@ -145,17 +136,3 @@ else:
                             """
                             response = model.generate_content([prompt, raw_img])
                             response_text = response.text.strip()
-                            
-                            if response_text.startswith("```"):
-                                response_text = response_text.split("```")[1]
-                                if response_text.startswith("json"):
-                                    response_text = response_text[4:]
-                            
-                            data_part = json.loads(response_text.strip())
-                            all_extracted_data.extend(data_part)
-                        
-                        df_raw = pd.DataFrame(all_extracted_data)
-                        df_raw['points'] = pd.to_numeric(df_raw['points'])
-                        df_grouped = df_raw.groupby('name', as_index=False).sum()
-                        
-                        # Simpan hasil

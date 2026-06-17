@@ -4,198 +4,177 @@ from PIL import Image, ImageDraw, ImageFont
 import json
 import pandas as pd
 import io
+import os
+from datetime import datetime
 
 # =========================================================================
-# 🔑 PENGATURAN INTERNAL (Ubah Bagian Ini Sebelum Upload/Dijalankan)
+# 🔑 PENGATURAN INTERNAL
 # =========================================================================
 GEMINI_API_KEY = "AQ.Ab8RN6Ia9d9C_DwEaZeeETi_COLRGARZEunDkG_lgyqERtaFfA" 
 APP_PASSWORD = "VIDA123" 
+DB_FILE = "database_riwayat.json"
 # =========================================================================
 
-# Konfigurasi Awal Halaman Web
-st.set_page_config(page_title="AI Advanced Point System", layout="wide")
+# Konfigurasi Halaman Web ala Aplikasi Modern
+st.set_page_config(page_title="AI Point System", layout="wide", initial_sidebar_state="expanded")
 
-# 1. GERBANG KEAMANAN (PASSWORD GATE)
-st.title("🔒 Akses Sistem Terproteksi")
-input_sandi = st.text_input("Masukkan Sandi Aplikasi untuk Membuka Dashboard:", type="password")
+# Kustomisasi CSS agar tampilan lebih bersih (Menyembunyikan menu bawaan Streamlit)
+st.markdown("""
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    </style>
+    """, unsafe_allow_html=True)
 
-if input_sandi != APP_PASSWORD:
-    if input_sandi:
-        st.error("❌ Sandi salah! Akses ditolak. Silakan periksa kembali sandi Anda.")
-    else:
-        st.info("💡 Masukkan sandi keamanan internal untuk mengaktifkan seluruh fitur rekap poin otomatis.")
+# 1. FUNGSI DATABASE LOKAL (Sistem Folder/Riwayat)
+def load_history():
+    if os.path.exists(DB_FILE):
+        with open(DB_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_history(history_data):
+    with open(DB_FILE, 'w') as f:
+        json.dump(history_data, f, indent=4)
+
+# Load riwayat ke memory
+if "history_db" not in st.session_state:
+    st.session_state.history_db = load_history()
+if "current_folder" not in st.session_state:
+    st.session_state.current_folder = "Buat Rekap Baru ✧"
+
+# 2. GERBANG KEAMANAN
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("🔒 Akses Sistem Manajemen")
+    input_sandi = st.text_input("Masukkan sandi keamanan untuk mengakses panel ini:", type="password")
+    if input_sandi == APP_PASSWORD:
+        st.session_state.authenticated = True
+        st.rerun()
+    elif input_sandi:
+        st.error("❌ Sandi salah. Akses ditolak.")
     st.stop()
 
-# 2. AKTIVASI AI
+# 3. AKTIVASI AI
 try:
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
-    st.error(f"Gagal mengaktifkan AI. Periksa kembali API Key di dalam kode. Error: {e}")
+    st.error(f"Gagal mengaktifkan AI. Error: {e}")
     st.stop()
 
-# 3. DATABASE MASTER & ANTRIAN GAMBAR (Session State)
-if "hosts_db" not in st.session_state:
-    st.session_state.hosts_db = {
-        "Eve": 0,
-        "Armor": 43407,
-        "Aries_Host1": 0,
-        "Leo_Host1": 0,
-        "Libra_Host1": 0
-    }
+# 4. SIDEBAR (MIRIP GEMINI HISTORY)
+st.sidebar.title("📁 Riwayat Rekap")
+st.sidebar.button("➕ Buat Rekap Baru", on_click=lambda: st.session_state.update(current_folder="Buat Rekap Baru ✧"))
 
-if "image_queue" not in st.session_state:
-    st.session_state.image_queue = [] # Tempat menampung gambar tanpa batas
-if "temp_processed_data" not in st.session_state:
-    st.session_state.temp_processed_data = None
-if "discrepancy_active" not in st.session_state:
-    st.session_state.discrepancy_active = False
-if "discrepancy_value" not in st.session_state:
-    st.session_state.discrepancy_value = 0
+st.sidebar.markdown("---")
+st.sidebar.caption("Folder Hari Sebelumnya:")
 
-# Tampilan Utama Setelah Login Berhasil
-st.success("🔓 Akses Diberikan. Selamat Datang di Dashboard Manajemen Poin.")
-st.markdown("---")
+# Tampilkan daftar riwayat terbalik (terbaru di atas)
+for folder_id in reversed(list(st.session_state.history_db.keys())):
+    folder_label = st.session_state.history_db[folder_id].get("label", folder_id)
+    if st.sidebar.button(f"📄 {folder_label}", key=f"btn_{folder_id}"):
+        st.session_state.current_folder = folder_id
 
-# Tampilkan Database Host Saat Ini di Sidebar
-st.sidebar.subheader("👥 Database Host Terdaftar")
-st.sidebar.dataframe(
-    pd.DataFrame(list(st.session_state.hosts_db.items()), columns=["Nama Host", "Total Poin Terkumpul"]), 
-    use_container_width=True
-)
-
-# 4. AREA WORKSPACE UTAMA
-tab1, tab2 = st.tabs(["📈 Rekap & Distribusi Poin", "🔬 Upload Analisis Performa"])
-
-with tab1:
-    st.subheader("📸 Upload & Akumulasi Screenshot Poin")
+# 5. AREA KERJA UTAMA
+if st.session_state.current_folder == "Buat Rekap Baru ✧":
+    with st.chat_message("ai"):
+        st.write("✨ **Halo! Saya siap membantu merekap poin tim.** Silakan atur tipe rekap dan unggah gambar *screenshot* yang ingin dihitung hari ini.")
     
-    col1, col2, col3 = st.columns(3)
+    # Pengaturan Awal
+    col1, col2 = st.columns(2)
     with col1:
-        tipe_poin = st.selectbox("Pilih Tipe/Klasifikasi Poin:", ["PK", "Reguler", "Challenge Gift"])
+        tipe_poin = st.selectbox("Klasifikasi Poin:", ["PK", "Reguler", "Challenge Gift", "Event Khusus"])
     with col2:
-        target_total_poin = st.number_input("Input Target/Total Poin Seharusnya (Untuk Validasi):", min_value=0, value=0, step=1000)
-    with col3:
-        toleransi_selisih = st.number_input("Toleransi Selisih Poin:", min_value=0, value=5000, step=500)
+        nama_sesi = st.text_input("Beri Nama Folder Ini (Misal: Rekap Malam 17 Juni):", value=f"Rekap {datetime.now().strftime('%d %b %H:%M')}")
 
-    # Slot Unggah Gambar Komponen Input Tanpa Batas
+    # Area Upload (Tanpa Batas)
+    st.markdown("### 📤 Upload Gambar Poin")
     uploaded_files = st.file_uploader(
-        "Pilih satu atau beberapa gambar screenshot poin harian:", 
+        "Pilih gambar screenshot poin (Bisa pilih banyak sekaligus):", 
         type=["png", "jpg", "jpeg"], 
-        accept_multiple_files=True,
-        key="screenshot_uploader"
+        accept_multiple_files=True
     )
     
-    # Tombol untuk memasukkan gambar yang dipilih ke dalam antrean permanen
-    if uploaded_files:
-        if st.button("➕ Tambahkan Gambar Berkas ke Antrean"):
-            for f in uploaded_files:
-                try:
-                    img_obj = Image.open(f).convert("RGB")
-                    st.session_state.image_queue.append(img_obj)
-                except Exception as img_err:
-                    st.error(f"Gagal memuat salah satu gambar: {img_err}")
-            st.success(f"✅ Berhasil menambahkan {len(uploaded_files)} gambar ke dalam antrean!")
-            st.rerun()
+    template_file = st.file_uploader("Upload Gambar Background Laporan (Template):", type=["png", "jpg", "jpeg"])
 
-    # Tampilkan Status Antrean Gambar Saat Ini
-    st.markdown("---")
-    total_antrean = len(st.session_state.image_queue)
-    if total_antrean > 0:
-        st.info(f"📋 **Status Antrean:** Saat ini ada **{total_antrean} gambar** yang tersimpan di memori sistem dan siap diproses.")
-        if st.button("🗑️ Kosongkan Seluruh Antrean Gambar"):
-            st.session_state.image_queue = []
-            st.success("Antrean gambar dikosongkan.")
-            st.rerun()
-    else:
-        st.warning("⚠️ Antrean gambar kosong. Silakan upload gambar dan klik tombol 'Tambahkan Gambar Berkas ke Antrean' di atas.")
-
-    template_file = st.file_uploader("Upload Gambar Background/Template Laporan Akhir:", type=["png", "jpg", "jpeg"], key="template_poin")
-
-    # PROSES EKSTRAKSI DATA DARI ANTREAN
-    if total_antrean > 0 and template_file:
-        if st.button("🚀 Mulai Ekstrak & Hitung Semua Gambar Antrean"):
+    if uploaded_files and template_file:
+        if st.button("🚀 Mulai Proses & Simpan ke Folder", use_container_width=True):
             all_extracted_data = []
             
-            with st.spinner(f"AI sedang membaca {total_antrean} gambar dalam antrean secara berurutan..."):
-                try:
-                    for idx, raw_img in enumerate(st.session_state.image_queue):
-                        prompt = """
-                        Analisis gambar screenshot data poin berikut. Extract semua nama host dan jumlah poin mereka.
-                        Pastikan ejaan nama sangat akurat (Contoh: 'Eve' jangan sampai dibaca 'Ive').
-                        Kembalikan HANYA dalam format JSON array of objects tanpa teks markdown pembuka/penutup seperti ini:
-                        [{"name": "NamaHost", "points": 10000}]
-                        """
+            with st.chat_message("ai"):
+                with st.spinner("Membaca dan mengekstrak data dari gambar..."):
+                    try:
+                        for file in uploaded_files:
+                            raw_img = Image.open(file)
+                            prompt = """
+                            Analisis gambar screenshot data poin berikut. Extract semua nama host dan jumlah poin mereka.
+                            Pastikan ejaan nama akurat (contoh 'Eve' bukan 'Ive').
+                            Kembalikan HANYA format JSON array: [{"name": "NamaHost", "points": 10000}]
+                            """
+                            response = model.generate_content([prompt, raw_img])
+                            response_text = response.text.strip()
+                            
+                            if response_text.startswith("```"):
+                                response_text = response_text.split("```")[1]
+                                if response_text.startswith("json"):
+                                    response_text = response_text[4:]
+                            
+                            data_part = json.loads(response_text.strip())
+                            all_extracted_data.extend(data_part)
                         
-                        response = model.generate_content([prompt, raw_img])
-                        response_text = response.text.strip()
+                        # Gabungkan dan rapikan data
+                        df_raw = pd.DataFrame(all_extracted_data)
+                        df_raw['points'] = pd.to_numeric(df_raw['points'])
+                        df_grouped = df_raw.groupby('name', as_index=False).sum()
                         
-                        if response_text.startswith("```"):
-                            response_text = response_text.split("```")[1]
-                            if response_text.startswith("json"):
-                                response_text = response_text[4:]
+                        # Simpan ke Database Riwayat (Folder)
+                        folder_id = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        st.session_state.history_db[folder_id] = {
+                            "label": f"{nama_sesi} ({tipe_poin})",
+                            "tipe": tipe_poin,
+                            "data": df_grouped.to_dict('records')
+                        }
+                        save_history(st.session_state.history_db)
                         
-                        data_part = json.loads(response_text.strip())
-                        all_extracted_data.extend(data_part)
-                    
-                    # Gabungkan data poin per host
-                    df_raw = pd.DataFrame(all_extracted_data)
-                    df_raw['points'] = pd.to_numeric(df_raw['points'])
-                    df_grouped = df_raw.groupby('name', as_index=False).sum()
-                    
-                    total_terhitung = df_grouped['points'].sum()
-                    selisih = total_terhitung - target_total_poin
-                    
-                    st.session_state.temp_processed_data = df_grouped.to_dict('records')
-                    st.session_state.tipe_proses = tipe_poin
-                    
-                    if target_total_poin > 0 and abs(selisih) > toleransi_selisih:
-                        st.session_state.discrepancy_active = True
-                        st.session_state.discrepancy_value = selisih
-                    else:
-                        st.session_state.discrepancy_active = False
+                        st.session_state.current_folder = folder_id
                         st.rerun()
-                        
-                except Exception as e:
-                    st.error(f"Gagal memproses akumulasi gambar: {e}")
+                    except Exception as e:
+                        st.error(f"Gagal memproses gambar: {e}")
 
-    # 5. PANEL KONTROL ERROR SELISIH
-    if st.session_state.discrepancy_active:
-        st.error(f"⚠️ Terdeteksi Selisih Poin Sangat Besar! Total Selisih: {st.session_state.discrepancy_value:,} Poin.")
-        opsi_penanganan = st.radio("Metode Penanganan Selisih:", ["Bagi Rata ke Semua Host", "Masukkan Manual / Abaikan Selisih"])
-        
-        if st.button("Konfirmasi & Eksekusi Penanganan"):
-            df_temp = pd.DataFrame(st.session_state.temp_processed_data)
-            nilai_selisih_per_host = st.session_state.discrepancy_value / len(df_temp)
-            
-            if opsi_penanganan == "Bagi Rata ke Semua Host":
-                df_temp['points'] = df_temp['points'] - nilai_selisih_per_host
-                st.session_state.temp_processed_data = df_temp.to_dict('records')
-            
-            st.session_state.discrepancy_active = False
-            st.success("Selisih berhasil ditangani!")
-            st.rerun()
-
-    # 6. AKUMULASI & CETAK GAMBAR FINAL
-    if st.session_state.temp_processed_data and not st.session_state.discrepancy_active:
-        df_final = pd.DataFrame(st.session_state.temp_processed_data)
-        
-        if st.session_state.tipe_proses == "PK":
-            host_terkecil = min(st.session_state.hosts_db, key=st.session_state.hosts_db.get)
-            st.info(f"ℹ️ Mode PK Aktif: Distribusi poin diprioritaskan untuk mendukung host dengan poin terkecil ({host_terkecil}).")
-            
-        for item in st.session_state.temp_processed_data:
-            nama = item['name']
-            poin = item['points']
-            
-            if nama not in st.session_state.hosts_db:
-                st.session_state.hosts_db[nama] = 0
-                st.toast(f"✨ Host Baru Tersimpan: {nama}")
-                
-            st.session_state.hosts_db[nama] += poin
-
-        st.subheader("🖼️ Output Gambar Laporan Akhir")
-        report_image = Image.open(template_file).convert("RGB")
+else:
+    # MODE BUKA FOLDER LAMA (EDIT & RE-GENERATE)
+    folder_id = st.session_state.current_folder
+    folder_data = st.session_state.history_db[folder_id]
+    
+    with st.chat_message("ai"):
+        st.write(f"📂 **Membuka Folder:** `{folder_data['label']}`")
+        st.write("Jika ada kesalahan sistem saat membaca angka atau nama kemarin, Anda bisa **mengklik langsung pada tabel di bawah ini** untuk mengeditnya secara manual. Data akan otomatis tersimpan.")
+    
+    # Menampilkan Data Editor Interaktif
+    df = pd.DataFrame(folder_data['data'])
+    edited_df = st.data_editor(
+        df, 
+        use_container_width=True, 
+        num_rows="dynamic",
+        key=f"editor_{folder_id}"
+    )
+    
+    # Tombol Simpan Perubahan Data
+    if st.button("💾 Simpan Perubahan Angka/Nama"):
+        st.session_state.history_db[folder_id]['data'] = edited_df.to_dict('records')
+        save_history(st.session_state.history_db)
+        st.success("Perubahan berhasil disimpan ke database!")
+    
+    st.markdown("---")
+    st.markdown("### 🖼️ Cetak Ulang Gambar Laporan")
+    template_file_re = st.file_uploader("Upload ulang Template Gambar Background untuk mencetak laporan yang sudah direvisi:", type=["png", "jpg", "jpeg"])
+    
+    if template_file_re and st.button("🖨️ Cetak Gambar Laporan Sekarang", use_container_width=True):
+        report_image = Image.open(template_file_re).convert("RGB")
         draw = ImageDraw.Draw(report_image)
         
         try:
@@ -206,42 +185,25 @@ with tab1:
             font_sub = ImageFont.load_default()
 
         start_x, start_y = 60, 160
-        draw.text((start_x, start_y - 60), f"LAPORAN POIN - TIM LIVE ({st.session_state.tipe_proses})", fill=(255, 255, 255), font=font_title)
+        draw.text((start_x, start_y - 60), f"LAPORAN POIN - {folder_data['tipe']}", fill=(255, 255, 255), font=font_title)
         
-        df_sorted_report = df_final.sort_values(by='points', ascending=False)
-        for index, row in df_sorted_report.iterrows():
+        # Urutkan berdasarkan poin tertinggi saat dicetak
+        df_sorted = edited_df.sort_values(by='points', ascending=False)
+        for index, row in df_sorted.iterrows():
             text_line = f"- {row['name']} : +{int(row['points']):,} Poin"
             draw.text((start_x, start_y), text_line, fill=(255, 255, 255), font=font_sub)
             start_y += 45
             
-        st.image(report_image, caption="Hasil Laporan Final Siap Dikirim ke Kak Ayu", use_container_width=True)
-        
-        img_byte_arr = io.BytesIO()
-        report_image.save(img_byte_arr, format='PNG')
-        img_byte_arr = img_byte_arr.getvalue()
-        
-        st.download_button(
-            label="📥 Download Gambar Laporan Akhir",
-            data=img_byte_arr,
-            file_name=f"laporan_final_{st.session_state.tipe_proses}.png",
-            mime="image/png"
-        )
-        
-        if st.button("Clear Buffer Harian & Reset Antrean"):
-            st.session_state.temp_processed_data = None
-            st.session_state.image_queue = [] # Bersihkan antrean untuk hari esok
-            st.rerun()
-
-with tab2:
-    st.subheader("🔬 Modul Analisis Performa AI")
-    st.write("Tempat khusus untuk analisis data grafik, durasi, atau retensi traffic.")
-    
-    analysis_file = st.file_uploader("Upload Gambar Grafik/Tabel Analisis:", type=["png", "jpg", "jpeg"], key="analysis_uploader")
-    
-    if analysis_file and st.button("🔮 Jelaskan Hasil Analisis"):
-        with st.spinner("AI sedang menganalisis data visual..."):
-            raw_analysis = Image.open(analysis_file)
-            analysis_prompt = "Analisis gambar grafik performa streaming ini. Berikan poin penting perkembangan traffic dan strategi ringkas untuk pelaporan manajemen."
-            analysis_response = model.generate_content([analysis_prompt, raw_analysis])
-            st.success("📋 Hasil Analisis AI Selesai:")
-            st.info(analysis_response.text)
+        with st.chat_message("ai"):
+            st.image(report_image, caption="Hasil Revisi Laporan Siap Dikirim ke Manajemen", use_container_width=True)
+            
+            img_byte_arr = io.BytesIO()
+            report_image.save(img_byte_arr, format='PNG')
+            img_byte_arr = img_byte_arr.getvalue()
+            
+            st.download_button(
+                label="📥 Download Gambar Laporan",
+                data=img_byte_arr,
+                file_name=f"Revisi_{folder_data['label']}.png",
+                mime="image/png"
+            )

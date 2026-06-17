@@ -4,12 +4,12 @@ import pandas as pd
 import io
 import json
 import matplotlib.pyplot as plt
-import time  # <-- Modul baru untuk memberi jeda waktu istirahat API
+import time
 
 st.set_page_config(page_title="AI Point Converter", layout="centered")
 
 # =========================================================================
-# STATE MANAGEMENT (Menyimpan status login)
+# STATE MANAGEMENT
 # =========================================================================
 if 'api_verified' not in st.session_state:
     st.session_state.api_verified = False
@@ -35,10 +35,8 @@ if not st.session_state.api_verified:
                 genai.configure(api_key=api_key_bersih)
                 
                 try:
-                    # Tes API dengan mencoba mengambil daftar model yang tersedia
                     available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                     
-                    # Auto-Detect Model Terbaik yang diizinkan
                     if 'models/gemini-1.5-pro' in available_models:
                         st.session_state.model_name = 'gemini-1.5-pro'
                     elif 'models/gemini-1.5-flash' in available_models:
@@ -59,7 +57,7 @@ if not st.session_state.api_verified:
             st.warning("API Key tidak boleh kosong.")
 
 # =========================================================================
-# HALAMAN 2: APLIKASI UTAMA (Hanya terbuka jika API Valid)
+# HALAMAN 2: APLIKASI UTAMA
 # =========================================================================
 else:
     genai.configure(api_key=st.session_state.api_key)
@@ -76,7 +74,7 @@ else:
             st.rerun()
 
     st.markdown("---")
-    st.write("Upload campuran gambar **Tabel Poin MCA** dan **TikTok Analytics** sekaligus. Sistem akan otomatis mendeteksi dan menggabungkan poin mereka.")
+    st.write("Upload campuran gambar **Tabel Poin MCA** dan **TikTok Analytics/Match** sekaligus.")
     
     uploaded_files = st.file_uploader("📸 Upload Screenshot (Bisa pilih banyak file):", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
 
@@ -84,23 +82,29 @@ else:
         if st.button("🚀 Convert & Gabungkan Poin", type="primary", use_container_width=True):
             all_data = []
             
-            # Progress bar untuk memantau proses jika upload banyak gambar
             progress_text = "Membaca gambar..."
             my_bar = st.progress(0, text=progress_text)
             total_files = len(uploaded_files)
             
-            with st.spinner("AI sedang menganalisis gambar. Mohon tunggu, jangan tutup halaman ini..."):
+            with st.spinner("AI sedang menganalisis data visual..."):
                 try:
                     from PIL import Image
                     for i, file in enumerate(uploaded_files):
                         img = Image.open(file)
                         
-                        # PROMPT: Dilatih untuk mengenali MCA dan TikTok sekaligus
+                        # =========================================================================
+                        # PROMPT AI YANG SUDAH DIBEKALI ATURAN SOLO & MVP 2 HOST
+                        # =========================================================================
                         prompt = """
-                        Gambar ini berisi data poin performa host. Bentuknya bisa berupa tabel rekap (MCA/Spreadsheet) ATAU screenshot analitik TikTok (TikTok Analytics/Live Center).
-                        Tugasmu: Ekstrak nama host dan total poin/pendapatan (diamond/koin/adjusted) mereka.
-                        - Jika gambar adalah tabel MCA: Cari baris 'TOTAL' atau 'ADJUSTED' di bagian bawah, dan pasangkan dengan nama host di bagian atas.
-                        - Jika gambar adalah TikTok Analytics: Ekstrak nama akun/host dan total koin/diamond yang tertera.
+                        Gambar ini berisi data poin performa host. Bentuknya bisa berupa tabel rekap (MCA/Spreadsheet) ATAU screenshot analitik/pertandingan TikTok.
+                        Tugasmu: Ekstrak nama host dan total poin/pendapatan (diamond/koin/adjusted) mereka berdasarkan aturan berikut:
+                        
+                        ATURAN EKSTRAKSI:
+                        1. Jika gambar adalah tabel MCA: Cari baris 'TOTAL' atau 'ADJUSTED' di bagian bawah, pasangkan dengan nama host di bagian atas.
+                        2. Jika gambar adalah TikTok Analytics biasa: Ekstrak nama akun/host dan total koin/diamond yang tertera.
+                        3. ATURAN KHUSUS SOLO & MVP: Jika ada data kategori 'Solo MVP', gabungkan nilainya menjadi satu kesatuan poin 'Solo'. 
+                        4. ATURAN PK/MATCH: Jika screenshot menampilkan match/pertandingan yang HANYA berisi 2 host (PK 1v1), maka anggap itu adalah perebutan poin MVP. Kamu wajib mengekstrak dan menggunakan nilai poin yang terbaru/final yang tertera di layar untuk masing-masing host.
+                        
                         Abaikan host yang bernama '-' atau data yang kosong. 
                         Pastikan ejaan nama akurat (contoh: 'Eve' bukan 'Ive').
                         Kembalikan HANYA format JSON array persis seperti ini: [{"name": "UTA", "points": 8015}]. Tanpa teks markdown apapun.
@@ -115,11 +119,9 @@ else:
                         data_part = json.loads(res_text)
                         all_data.extend(data_part)
                         
-                        # Update progress bar
                         progress_percentage = int(((i + 1) / total_files) * 100)
                         my_bar.progress(progress_percentage, text=f"Selesai membaca gambar {i+1} dari {total_files}")
                         
-                        # JEDA WAKTU (4 DETIK) AGAR TIDAK TERKENA LIMIT 429 DARI GOOGLE
                         if i < total_files - 1:
                             time.sleep(4)
                     
@@ -129,23 +131,16 @@ else:
 
                     # OLAH DATA & GABUNGKAN POIN
                     df = pd.DataFrame(all_data)
-                    
-                    # Pastikan poin berbentuk angka
                     df['points'] = pd.to_numeric(df['points'])
-                    
-                    # Seragamkan ejaan nama (Huruf Besar Semua & hapus spasi berlebih)
                     df['name'] = df['name'].astype(str).str.upper().str.strip()
                     
-                    # Gabungkan poin host yang namanya sama
                     df_grouped = df.groupby('name', as_index=False).sum()
                     
-                    # Urutkan berdasarkan poin tertinggi
                     df_sorted = df_grouped.sort_values(by='points', ascending=False).reset_index(drop=True)
                     df_sorted.index += 1
                     df_sorted.insert(0, 'Rank', df_sorted.index)
                     df_sorted.rename(columns={'name': 'Nama Host', 'points': 'Total Poin'}, inplace=True)
                     
-                    # Format angka ribuan
                     df_sorted['Total Poin'] = df_sorted['Total Poin'].apply(lambda x: f"{int(x):,}")
 
                     st.success("✅ Ekstraksi dan Penggabungan Berhasil!")

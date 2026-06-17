@@ -129,10 +129,103 @@ else:
                     try:
                         for file in uploaded_files:
                             raw_img = Image.open(file)
-                            prompt = """
-                            Analisis gambar screenshot data poin berikut. Extract semua nama host dan jumlah poin mereka.
-                            Pastikan ejaan nama akurat (contoh 'Eve' bukan 'Ive').
-                            Kembalikan HANYA format JSON array: [{"name": "NamaHost", "points": 10000}]
-                            """
+                            
+                            # Prompt diubah jadi 1 baris lurus agar tidak ada error spasi (indentation)
+                            prompt = "Analisis gambar screenshot data poin berikut. Extract semua nama host dan jumlah poin mereka. Pastikan ejaan nama akurat (contoh 'Eve' bukan 'Ive'). Kembalikan HANYA format JSON array persis seperti ini: [{\"name\": \"NamaHost\", \"points\": 10000}]"
+                            
                             response = model.generate_content([prompt, raw_img])
                             response_text = response.text.strip()
+                            
+                            if response_text.startswith("```"):
+                                response_text = response_text.split("```")[1]
+                                if response_text.startswith("json"):
+                                    response_text = response_text[4:]
+                            
+                            data_part = json.loads(response_text.strip())
+                            all_extracted_data.extend(data_part)
+                        
+                        df_raw = pd.DataFrame(all_extracted_data)
+                        df_raw['points'] = pd.to_numeric(df_raw['points'])
+                        df_grouped = df_raw.groupby('name', as_index=False).sum()
+                        
+                        st.session_state.history_db[folder_id]['data'] = df_grouped.to_dict('records')
+                        save_history(st.session_state.history_db)
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"Gagal memproses gambar: {e}")
+
+    else:
+        with st.chat_message("ai"):
+            st.write("✅ **Data berhasil direkap!** Silakan periksa tabel di bawah ini. Anda bisa mengklik angka atau nama untuk mengoreksinya jika AI melakukan kesalahan baca.")
+        
+        df = pd.DataFrame(folder_data['data'])
+        edited_df = st.data_editor(
+            df, 
+            use_container_width=True, 
+            num_rows="dynamic",
+            key=f"editor_{folder_id}"
+        )
+        
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button("💾 Simpan Tabel", use_container_width=True):
+                st.session_state.history_db[folder_id]['data'] = edited_df.to_dict('records')
+                save_history(st.session_state.history_db)
+                st.success("Tabel di-update!")
+        with col2:
+            if st.button("⚠️ Hapus Seluruh Data di Folder Ini (Reset)", use_container_width=True):
+                st.session_state.history_db[folder_id]['data'] = []
+                save_history(st.session_state.history_db)
+                st.rerun()
+                
+        st.markdown("---")
+        st.subheader("🖨️ Cetak & Kirim Laporan")
+        template_file_re = st.file_uploader("Upload Template Gambar Background untuk laporan akhir:", type=["png", "jpg", "jpeg"], key=f"tpl_{folder_id}")
+        
+        if template_file_re and st.button("📤 Generate Gambar & Teks Pesan", type="primary", use_container_width=True):
+            report_image = Image.open(template_file_re).convert("RGB")
+            draw = ImageDraw.Draw(report_image)
+            
+            try:
+                font_title = ImageFont.load_default(size=30)
+                font_sub = ImageFont.load_default(size=22)
+            except:
+                font_title = ImageFont.load_default()
+                font_sub = ImageFont.load_default()
+
+            start_x, start_y = 60, 160
+            draw.text((start_x, start_y - 60), f"LAPORAN POIN - {folder_data['tipe']}", fill=(255, 255, 255), font=font_title)
+            
+            df_sorted = edited_df.sort_values(by='points', ascending=False)
+            
+            teks_wa = f"Halo Kak Ayu, berikut adalah rekap {folder_data['tipe']} tim untuk sesi ini:\n\n"
+            
+            for index, row in df_sorted.iterrows():
+                nama = row['name']
+                poin = int(row['points'])
+                
+                text_line = f"- {nama} : +{poin:,} Poin"
+                draw.text((start_x, start_y), text_line, fill=(255, 255, 255), font=font_sub)
+                start_y += 45
+                
+                teks_wa += f"• {nama}: {poin:,} Poin\n"
+                
+            teks_wa += "\nDetail performa selengkapnya ada pada gambar terlampir. Terima kasih, Kak.\n- Aqie"
+                
+            with st.chat_message("ai"):
+                st.image(report_image, caption="Laporan Siap Diunduh", use_container_width=True)
+                
+                img_byte_arr = io.BytesIO()
+                report_image.save(img_byte_arr, format='PNG')
+                img_byte_arr = img_byte_arr.getvalue()
+                
+                st.download_button(
+                    label="📥 Download Gambar Laporan",
+                    data=img_byte_arr,
+                    file_name=f"Laporan_{folder_data['label']}.png",
+                    mime="image/png"
+                )
+                
+                st.markdown("**Salin Teks di Bawah untuk Laporan Cepat:**")
+                st.text_area("Teks Siap Salin:", value=teks_wa, height=250)

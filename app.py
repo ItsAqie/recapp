@@ -45,12 +45,12 @@ if not st.session_state.api_verified:
                     elif 'models/gemini-pro-vision' in available_models:
                         st.session_state.model_name = 'gemini-pro-vision'
                     else:
-                        st.session_state.model_name = available_models[0] # Ambil apa saja yang ada
+                        st.session_state.model_name = available_models[0]
                         
                     # Jika berhasil sampai sini, berarti kunci Valid
                     st.session_state.api_verified = True
                     st.session_state.api_key = api_key_bersih
-                    st.rerun() # Refresh halaman untuk masuk ke aplikasi utama
+                    st.rerun()
                     
                 except Exception as e:
                     st.error("❌ Verifikasi Gagal! API Key salah, tidak valid, atau bermasalah.")
@@ -104,4 +104,58 @@ else:
                     
                     if not all_data:
                         st.error("AI tidak menemukan data yang sesuai format di gambar tersebut.")
-                        st.stop
+                        st.stop()
+
+                    # Olah dan rapikan data
+                    df = pd.DataFrame(all_data)
+                    df['points'] = pd.to_numeric(df['points'])
+                    df_grouped = df.groupby('name', as_index=False).sum()
+                    df_sorted = df_grouped.sort_values(by='points', ascending=False).reset_index(drop=True)
+                    df_sorted.index += 1
+                    df_sorted.insert(0, 'Rank', df_sorted.index)
+                    df_sorted.rename(columns={'name': 'Nama Host', 'points': 'Total Poin'}, inplace=True)
+                    
+                    df_sorted['Total Poin'] = df_sorted['Total Poin'].apply(lambda x: f"{int(x):,}")
+
+                    st.success("✅ Konversi Berhasil!")
+                    st.dataframe(df_sorted, use_container_width=True)
+                    
+                    # Buat Gambar Tabel PNG
+                    fig_height = len(df_sorted) * 0.6 + 1.5
+                    fig, ax = plt.subplots(figsize=(8, fig_height))
+                    ax.axis('tight')
+                    ax.axis('off')
+                    ax.set_title("LAPORAN POIN HARIAN", fontsize=16, weight='bold', pad=20)
+                    
+                    table = ax.table(
+                        cellText=df_sorted.values, 
+                        colLabels=df_sorted.columns, 
+                        cellLoc='center', 
+                        loc='center', 
+                        bbox=[0, 0, 1, 1]
+                    )
+                    
+                    table.set_fontsize(12)
+                    
+                    for (row, col), cell in table.get_celld().items():
+                        if row == 0:
+                            cell.set_text_props(weight='bold', color='white')
+                            cell.set_facecolor('#2E7D32')
+                        elif row % 2 == 0:
+                            cell.set_facecolor('#F5F5F5')
+
+                    buf = io.BytesIO()
+                    plt.savefig(buf, format='png', bbox_inches='tight', dpi=300)
+                    buf.seek(0)
+                    plt.close(fig)
+
+                    st.download_button(
+                        label="📥 Download Tabel PNG", 
+                        data=buf, 
+                        file_name="Tabel_Rekap.png", 
+                        mime="image/png"
+                    )
+                    
+                except Exception as e:
+                    st.error("Terjadi kesalahan saat memproses gambar.")
+                    st.warning(f"Detail Error: {e}")

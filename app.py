@@ -1,17 +1,17 @@
 import streamlit as st
 import google.generativeai as genai
-from PIL import Image, ImageDraw, ImageFont
 import json
 import pandas as pd
 import io
 import os
 from datetime import datetime
+import matplotlib.pyplot as plt
 
 # =========================================================================
 # 🔑 PENGATURAN INTERNAL
 # =========================================================================
 GEMINI_API_KEY = "AQ.Ab8RN6Ia9d9C_DwEaZeeETi_COLRGARZEunDkG_lgyqERtaFfA" 
-APP_PASSWORD = "VIDA123" 
+APP_PASSWORD = "1231" 
 DB_FILE = "database_riwayat.json"
 # =========================================================================
 
@@ -35,6 +35,55 @@ def load_history():
 def save_history(history_data):
     with open(DB_FILE, 'w') as f:
         json.dump(history_data, f, indent=4)
+
+# Fungsi untuk Menggambar Tabel Dataframe menjadi File Gambar (PNG)
+def create_table_image(df, title):
+    # Rapikan dan urutkan data
+    df_sorted = df.sort_values(by='points', ascending=False).reset_index(drop=True)
+    df_sorted.index = df_sorted.index + 1
+    df_sorted.insert(0, 'Rank', df_sorted.index)
+    df_sorted.rename(columns={'name': 'Nama Host', 'points': 'Total Poin'}, inplace=True)
+    
+    # Format angka ribuan
+    df_sorted['Total Poin'] = df_sorted['Total Poin'].apply(lambda x: f"{int(x):,}")
+
+    # Kalkulasi ukuran gambar berdasarkan jumlah baris (host)
+    fig_height = len(df_sorted) * 0.6 + 1.5
+    fig, ax = plt.subplots(figsize=(8, fig_height))
+    ax.axis('tight')
+    ax.axis('off')
+    
+    # Judul Tabel
+    ax.set_title(title, fontsize=16, weight='bold', pad=20)
+
+    # Pembuatan Tabel Visual
+    table = ax.table(
+        cellText=df_sorted.values,
+        colLabels=df_sorted.columns,
+        cellLoc='center',
+        loc='center',
+        bbox=[0, 0, 1, 1]
+    )
+
+    table.auto_set_font_size(False)
+    table.set_fontsize(12)
+
+    # Mewarnai Header Tabel (Hijau Gelap)
+    for (row, col), cell in table.get_celld().items():
+        if row == 0:
+            cell.set_text_props(weight='bold', color='white')
+            cell.set_facecolor('#2E7D32')
+        else:
+            # Mewarnai baris genap/ganjil agar mudah dibaca
+            if row % 2 == 0:
+                cell.set_facecolor('#F5F5F5')
+
+    # Simpan plot ke memori (BytesIO) sebagai PNG beresolusi tinggi (300dpi)
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=300)
+    buf.seek(0)
+    plt.close(fig)
+    return buf
 
 if "history_db" not in st.session_state:
     st.session_state.history_db = load_history()
@@ -82,14 +131,13 @@ for folder_id in reversed(list(st.session_state.history_db.keys())):
 # =========================================================================
 if st.session_state.current_folder == "Buat Folder Baru ➕":
     st.header("➕ Buat Folder Rekap Baru")
-    st.write("Buat wadah foldernya terlebih dahulu. Anda bisa mengisi screenshot dan merekap datanya nanti.")
     
     with st.container():
         col1, col2 = st.columns(2)
         with col1:
-            tipe_poin = st.selectbox("Klasifikasi Poin / Tipe Sesi:", ["PK", "Reguler", "Challenge Gift", "Event Khusus"])
+            tipe_poin = st.selectbox("Klasifikasi Poin:", ["PK", "Reguler", "Challenge Gift", "Event Khusus"])
         with col2:
-            nama_sesi = st.text_input("Nama Folder:", value=f"Rekap {datetime.now().strftime('%d %b %H:%M')}")
+            nama_sesi = st.text_input("Nama Grup / Sesi (Misal: Leo Sesi 1):", value=f"Rekap {datetime.now().strftime('%d %b %H:%M')}")
         
         if st.button("📁 Buat Folder Sekarang", type="primary"):
             folder_id = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -111,27 +159,30 @@ else:
     st.header(f"📂 {folder_data['label']}")
     st.markdown("---")
     
+    # JIKA DATA KOSONG (WAKTUNYA UPLOAD SCREENSHOT)
     if not folder_data.get('data'):
         with st.chat_message("ai"):
-            st.write("Folder ini masih kosong. Silakan unggah *screenshot* poin untuk mulai direkap oleh sistem AI.")
+            st.write("Folder ini siap menampung gambar screenshot tabel Anda. Sistem akan otomatis menghitung baris TOTAL/ADJUSTED dari gambar yang diunggah.")
         
         uploaded_files = st.file_uploader(
-            "Pilih satu atau beberapa gambar screenshot poin:", 
+            "Upload Screenshot Spreadsheet Poin:", 
             type=["png", "jpg", "jpeg"], 
             accept_multiple_files=True
         )
         
         if uploaded_files:
-            if st.button("🪄 Ekstrak & Rekap Gambar ke Folder Ini", type="primary", use_container_width=True):
+            if st.button("🪄 Ekstrak & Hitung Angka (Tanpa Template)", type="primary", use_container_width=True):
                 all_extracted_data = []
                 
-                with st.spinner("AI sedang mengekstrak angka dari gambar..."):
+                with st.spinner("AI sedang memindai tabel dan mencocokkan nama dengan baris TOTAL..."):
                     try:
+                        import google.generativeai as genai
+                        from PIL import Image
+                        
                         for file in uploaded_files:
                             raw_img = Image.open(file)
                             
-                            # Prompt diubah jadi 1 baris lurus agar tidak ada error spasi (indentation)
-                            prompt = "Analisis gambar screenshot data poin berikut. Extract semua nama host dan jumlah poin mereka. Pastikan ejaan nama akurat (contoh 'Eve' bukan 'Ive'). Kembalikan HANYA format JSON array persis seperti ini: [{\"name\": \"NamaHost\", \"points\": 10000}]"
+                            prompt = "Gambar ini adalah tabel rekap performa host. Di bagian atas tabel terdapat baris nama-nama host (seperti UTA, JENV, RUBIE, dll). Di sebelah kiri terdapat label kategori poin. Tugasmu: Temukan baris dengan label 'TOTAL' atau 'ADJUSTED' di bagian bawah tabel utama. Pasangkan setiap nama host di atas dengan angka mereka yang berada di baris 'TOTAL' atau 'ADJUSTED' tersebut. Abaikan host yang bernama '-' atau kolom yang kosong. Abaikan tabel-tabel kecil di sebelah kanan. Pastikan ejaan nama akurat (contoh: 'Eve' bukan 'Ive'). Kembalikan HANYA format JSON array persis seperti ini: [{\"name\": \"UTA\", \"points\": 8015}, {\"name\": \"JENV\", \"points\": 2796}]. Jangan tambahkan teks markdown apapun."
                             
                             response = model.generate_content([prompt, raw_img])
                             response_text = response.text.strip()
@@ -155,9 +206,10 @@ else:
                     except Exception as e:
                         st.error(f"Gagal memproses gambar: {e}")
 
+    # JIKA DATA SUDAH TERISI (WAKTUNYA EDIT & EXPORT KE PNG)
     else:
         with st.chat_message("ai"):
-            st.write("✅ **Data berhasil direkap!** Silakan periksa tabel di bawah ini. Anda bisa mengklik angka atau nama untuk mengoreksinya jika AI melakukan kesalahan baca.")
+            st.write("✅ **Ekstraksi Selesai!** Jika ada kesalahan nominal karena gambar buram, klik langsung pada tabel di bawah untuk merevisinya. Setelah itu, tekan tombol Cetak ke PNG.")
         
         df = pd.DataFrame(folder_data['data'])
         edited_df = st.data_editor(
@@ -174,58 +226,38 @@ else:
                 save_history(st.session_state.history_db)
                 st.success("Tabel di-update!")
         with col2:
-            if st.button("⚠️ Hapus Seluruh Data di Folder Ini (Reset)", use_container_width=True):
+            if st.button("⚠️ Hapus Data (Reset Folder)", use_container_width=True):
                 st.session_state.history_db[folder_id]['data'] = []
                 save_history(st.session_state.history_db)
                 st.rerun()
                 
         st.markdown("---")
-        st.subheader("🖨️ Cetak & Kirim Laporan")
-        template_file_re = st.file_uploader("Upload Template Gambar Background untuk laporan akhir:", type=["png", "jpg", "jpeg"], key=f"tpl_{folder_id}")
+        st.subheader("🖨️ Export Laporan Akhir")
         
-        if template_file_re and st.button("📤 Generate Gambar & Teks Pesan", type="primary", use_container_width=True):
-            report_image = Image.open(template_file_re).convert("RGB")
-            draw = ImageDraw.Draw(report_image)
-            
-            try:
-                font_title = ImageFont.load_default(size=30)
-                font_sub = ImageFont.load_default(size=22)
-            except:
-                font_title = ImageFont.load_default()
-                font_sub = ImageFont.load_default()
-
-            start_x, start_y = 60, 160
-            draw.text((start_x, start_y - 60), f"LAPORAN POIN - {folder_data['tipe']}", fill=(255, 255, 255), font=font_title)
-            
-            df_sorted = edited_df.sort_values(by='points', ascending=False)
-            
-            teks_wa = f"Halo Kak Ayu, berikut adalah rekap {folder_data['tipe']} tim untuk sesi ini:\n\n"
-            
-            for index, row in df_sorted.iterrows():
-                nama = row['name']
-                poin = int(row['points'])
+        if st.button("📤 Generate & Export Tabel ke PNG", type="primary", use_container_width=True):
+            with st.spinner("Membuat gambar tabel resolusi tinggi..."):
+                judul_tabel = f"LAPORAN POIN - {folder_data['label']}"
                 
-                text_line = f"- {nama} : +{poin:,} Poin"
-                draw.text((start_x, start_y), text_line, fill=(255, 255, 255), font=font_sub)
-                start_y += 45
+                # Fungsi pembuat gambar tabel dipanggil di sini
+                tabel_png = create_table_image(edited_df, judul_tabel)
                 
-                teks_wa += f"• {nama}: {poin:,} Poin\n"
+                df_sorted = edited_df.sort_values(by='points', ascending=False)
+                teks_wa = f"Halo Kak Ayu, berikut adalah laporan {folder_data['tipe']} tim untuk sesi ini:\n\n"
                 
-            teks_wa += "\nDetail performa selengkapnya ada pada gambar terlampir. Terima kasih, Kak.\n- Aqie"
+                for index, row in df_sorted.iterrows():
+                    teks_wa += f"• {row['name']}: {int(row['points']):,} Poin\n"
+                    
+                teks_wa += "\nTabel rekap visual terlampir pada gambar. Terima kasih, Kak.\n- Aqie"
                 
-            with st.chat_message("ai"):
-                st.image(report_image, caption="Laporan Siap Diunduh", use_container_width=True)
-                
-                img_byte_arr = io.BytesIO()
-                report_image.save(img_byte_arr, format='PNG')
-                img_byte_arr = img_byte_arr.getvalue()
-                
-                st.download_button(
-                    label="📥 Download Gambar Laporan",
-                    data=img_byte_arr,
-                    file_name=f"Laporan_{folder_data['label']}.png",
-                    mime="image/png"
-                )
-                
-                st.markdown("**Salin Teks di Bawah untuk Laporan Cepat:**")
-                st.text_area("Teks Siap Salin:", value=teks_wa, height=250)
+                with st.chat_message("ai"):
+                    st.image(tabel_png, caption="Tabel Siap Diunduh", use_container_width=True)
+                    
+                    st.download_button(
+                        label="📥 Download Tabel PNG",
+                        data=tabel_png,
+                        file_name=f"Rekap_Tabel_{folder_data['label']}.png",
+                        mime="image/png"
+                    )
+                    
+                    st.markdown("**Salin Teks di Bawah untuk Laporan Cepat:**")
+                    st.text_area("Teks Siap Salin:", value=teks_wa, height=250)

@@ -10,8 +10,8 @@ from datetime import datetime
 # =========================================================================
 # 🔑 PENGATURAN INTERNAL
 # =========================================================================
-GEMINI_API_KEY = "MASUKKAN_API_KEY_GEMINI_ANDA_DI_SINI" 
-APP_PASSWORD = "MASUKKAN_SANDI_RAHASIA_ANDA_DI_SINI" 
+GEMINI_API_KEY = "MAQ.Ab8RN6Ia9d9C_DwEaZeeETi_COLRGARZEunDkG_lgyqERtaFfA" 
+APP_PASSWORD = "VIDA123" 
 DB_FILE = "database_riwayat.json"
 # =========================================================================
 

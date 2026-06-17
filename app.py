@@ -4,6 +4,7 @@ import pandas as pd
 import io
 import json
 import matplotlib.pyplot as plt
+import time  # <-- Modul baru untuk memberi jeda waktu istirahat API
 
 st.set_page_config(page_title="AI Point Converter", layout="centered")
 
@@ -83,13 +84,18 @@ else:
         if st.button("🚀 Convert & Gabungkan Poin", type="primary", use_container_width=True):
             all_data = []
             
-            with st.spinner("AI sedang membaca dan menganalisis seluruh gambar..."):
+            # Progress bar untuk memantau proses jika upload banyak gambar
+            progress_text = "Membaca gambar..."
+            my_bar = st.progress(0, text=progress_text)
+            total_files = len(uploaded_files)
+            
+            with st.spinner("AI sedang menganalisis gambar. Mohon tunggu, jangan tutup halaman ini..."):
                 try:
                     from PIL import Image
-                    for file in uploaded_files:
+                    for i, file in enumerate(uploaded_files):
                         img = Image.open(file)
                         
-                        # PROMPT BARU: Dilatih untuk mengenali MCA dan TikTok sekaligus
+                        # PROMPT: Dilatih untuk mengenali MCA dan TikTok sekaligus
                         prompt = """
                         Gambar ini berisi data poin performa host. Bentuknya bisa berupa tabel rekap (MCA/Spreadsheet) ATAU screenshot analitik TikTok (TikTok Analytics/Live Center).
                         Tugasmu: Ekstrak nama host dan total poin/pendapatan (diamond/koin/adjusted) mereka.
@@ -108,6 +114,14 @@ else:
                         
                         data_part = json.loads(res_text)
                         all_data.extend(data_part)
+                        
+                        # Update progress bar
+                        progress_percentage = int(((i + 1) / total_files) * 100)
+                        my_bar.progress(progress_percentage, text=f"Selesai membaca gambar {i+1} dari {total_files}")
+                        
+                        # JEDA WAKTU (4 DETIK) AGAR TIDAK TERKENA LIMIT 429 DARI GOOGLE
+                        if i < total_files - 1:
+                            time.sleep(4)
                     
                     if not all_data:
                         st.error("AI tidak menemukan data yang sesuai format di gambar tersebut.")
@@ -116,17 +130,16 @@ else:
                     # OLAH DATA & GABUNGKAN POIN
                     df = pd.DataFrame(all_data)
                     
-                    # 1. Pastikan points berbentuk angka
+                    # Pastikan poin berbentuk angka
                     df['points'] = pd.to_numeric(df['points'])
                     
-                    # 2. Seragamkan ejaan nama (Ubah ke Huruf Besar Semua & hapus spasi berlebih)
-                    # Ini mencegah "UTA" dan "Uta " terpisah saat dijumlahkan
+                    # Seragamkan ejaan nama (Huruf Besar Semua & hapus spasi berlebih)
                     df['name'] = df['name'].astype(str).str.upper().str.strip()
                     
-                    # 3. Gabungkan (Sum) poin host yang namanya sama dari MCA & TikTok
+                    # Gabungkan poin host yang namanya sama
                     df_grouped = df.groupby('name', as_index=False).sum()
                     
-                    # 4. Urutkan berdasarkan poin tertinggi (Ranking)
+                    # Urutkan berdasarkan poin tertinggi
                     df_sorted = df_grouped.sort_values(by='points', ascending=False).reset_index(drop=True)
                     df_sorted.index += 1
                     df_sorted.insert(0, 'Rank', df_sorted.index)
@@ -175,5 +188,5 @@ else:
                     )
                     
                 except Exception as e:
-                    st.error("Terjadi kesalahan saat memproses data gabungan.")
+                    st.error("Terjadi kesalahan saat memproses data.")
                     st.warning(f"Detail Error: {e}")
